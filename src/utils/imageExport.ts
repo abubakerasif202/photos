@@ -19,7 +19,7 @@ export function getResolutionDimensions(
   let longestEdge = 2048;
   if (resolution === '1K') longestEdge = 1024;
   if (resolution === '2K') longestEdge = 2048;
-  if (resolution === '4K') longestEdge = 3840;
+  if (resolution === '4K') longestEdge = 4096;
 
   let width = longestEdge;
   let height = longestEdge;
@@ -95,52 +95,38 @@ export async function downloadImageWithResolution(
           ctx.fillRect(0, 0, targetWidth, targetHeight);
         }
 
-        // Draw image stretched/scaled to target canvas resolution
-        ctx.drawImage(img, 0, 0, targetWidth, targetHeight);
+        // Crop to fill rather than distort room geometry when aspect ratios differ.
+        const scale = Math.max(targetWidth / img.naturalWidth, targetHeight / img.naturalHeight);
+        const scaledWidth = img.naturalWidth * scale;
+        const scaledHeight = img.naturalHeight * scale;
+        ctx.drawImage(img, (targetWidth - scaledWidth) / 2, (targetHeight - scaledHeight) / 2, scaledWidth, scaledHeight);
 
         const mimeType = format === 'jpg' ? 'image/jpeg' : 'image/png';
         const quality = format === 'jpg' ? 0.96 : undefined;
-        const dataUrl = canvas.toDataURL(mimeType, quality);
-
-        const link = document.createElement('a');
-        link.href = dataUrl;
+        canvas.toBlob((blob) => {
+          if (!blob) { reject(new Error('Unable to encode export image.')); return; }
+          const objectUrl = URL.createObjectURL(blob);
+          const link = document.createElement('a');
+          link.href = objectUrl;
         const extension = format === 'jpg' ? 'jpg' : 'png';
         const cleanName = baseFilename.replace(/[^a-zA-Z0-9_-]/g, '-').toLowerCase();
         link.download = `ochre-oak-${cleanName}-${resolution.toLowerCase()}-${targetWidth}x${targetHeight}.${extension}`;
         document.body.appendChild(link);
         link.click();
-        document.body.removeChild(link);
-        resolve();
+          document.body.removeChild(link);
+          setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
+          resolve();
+        }, mimeType, quality);
       } catch (canvasErr) {
-        // Fallback: direct download link if canvas access is blocked by security sandbox
-        console.warn('Canvas export fallback:', canvasErr);
-        triggerDirectDownload(imageUrl, format, resolution, baseFilename);
-        resolve();
+        reject(canvasErr);
       }
     };
 
     img.onerror = (err) => {
-      console.warn('Image load error during canvas export, triggering direct download fallback:', err);
-      triggerDirectDownload(imageUrl, format, resolution, baseFilename);
-      resolve();
+      reject(new Error('Could not load image for export. Check its CORS policy or save the original directly.'));
     };
 
     img.src = imageUrl;
   });
 }
 
-function triggerDirectDownload(
-  imageUrl: string,
-  format: ExportFormat,
-  resolution: ImageSize,
-  baseFilename: string
-) {
-  const link = document.createElement('a');
-  link.href = imageUrl;
-  const extension = format === 'jpg' ? 'jpg' : 'png';
-  const cleanName = baseFilename.replace(/[^a-zA-Z0-9_-]/g, '-').toLowerCase();
-  link.download = `ochre-oak-${cleanName}-${resolution.toLowerCase()}.${extension}`;
-  document.body.appendChild(link);
-  link.click();
-  document.body.removeChild(link);
-}
