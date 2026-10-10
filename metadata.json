@@ -1,0 +1,6 @@
+{
+  "name": "Ochre & Oak Renovations Sydney",
+  "description": "Editorial architectural showcase and AI studio for contemporary Sydney home renovations, powered by gemini-3-pro-image-preview with 1K, 2K, and 4K image generation.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
