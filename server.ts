@@ -87,7 +87,7 @@ app.post('/api/generate-image', async (req, res) => {
       aspectRatio = '16:9',
       imageSize = '2K',
       shotId,
-    } = req.body;
+    } = req.body ?? {};
 
     if (typeof prompt !== 'string' || !prompt.trim() || prompt.length > 4000) {
       res.status(400).json({ error: 'Prompt must contain 1–4000 characters.' });
@@ -131,7 +131,7 @@ app.post('/api/generate-image', async (req, res) => {
     });
 
     let imageUrl: string | null = null;
-    let descriptionText = '';
+
 
     const candidate = response.candidates?.[0];
     if (candidate?.content?.parts) {
@@ -139,8 +139,6 @@ app.post('/api/generate-image', async (req, res) => {
         if (part.inlineData?.data) {
           const mimeType = part.inlineData.mimeType || 'image/png';
           imageUrl = `data:${mimeType};base64,${part.inlineData.data}`;
-        } else if (part.text) {
-          descriptionText += part.text;
         }
       }
     }
@@ -148,7 +146,7 @@ app.post('/api/generate-image', async (req, res) => {
     if (!imageUrl) {
       res.status(502).json({
         error: 'No image data was returned by the model. Please check prompt content or safety restrictions.',
-        details: descriptionText || 'Model finished without inline image output.',
+        code: 'NO_IMAGE',
       });
       return;
     }
