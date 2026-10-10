@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import {
   Sparkles,
   Download,
@@ -53,6 +53,38 @@ export const ImageGenerator: React.FC<ImageGeneratorProps> = ({
   const [includeStyleBrief, setIncludeStyleBrief] = useState<boolean>(true);
   const [showStyleBriefDetails, setShowStyleBriefDetails] = useState<boolean>(false);
 
+  const accessTokenRef = useRef<string>('');
+  const obtainAccessToken = () => {
+    if (!accessTokenRef.current) {
+      const entered = window.prompt('Enter your private Image Studio access token (configured as GENERATION_ACCESS_TOKEN on the server):');
+      if (entered === null) return null;
+      accessTokenRef.current = entered.trim();
+    }
+    return accessTokenRef.current;
+  };
+  const requestImage = async (body: Record<string, unknown>) => {
+    const token = obtainAccessToken();
+    if (token === null) throw new Error('Generation cancelled.');
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 180000);
+    try {
+      const response = await fetch('/api/generate-image', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-generation-token': token },
+        body: JSON.stringify(body),
+        signal: controller.signal,
+      });
+      const data = await response.json().catch(() => ({}));
+      if (response.status === 401) accessTokenRef.current = '';
+      if (!response.ok || !data.success || !data.imageUrl) {
+        throw new Error(data.error || 'Image generation failed. Please try again.');
+      }
+      return data as { imageUrl: string; success: true };
+    } finally {
+      clearTimeout(timeout);
+    }
+  };
+
   // Execution states
   const [isGenerating, setIsGenerating] = useState<boolean>(false);
   const [generationStage, setGenerationStage] = useState<string>('');
@@ -87,8 +119,8 @@ export const ImageGenerator: React.FC<ImageGeneratorProps> = ({
 
   // Trigger single generation with gemini-3-pro-image-preview
   const handleGenerate = async () => {
-    if (!prompt.trim()) {
-      setError('Please provide a prompt description.');
+    if (!prompt.trim() || prompt.length > 4000) {
+      setError('Provide a prompt between 1 and 4000 characters.');
       return;
     }
 
@@ -111,25 +143,14 @@ export const ImageGenerator: React.FC<ImageGeneratorProps> = ({
     }, 2800);
 
     try {
-      const response = await fetch('/api/generate-image', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          prompt: prompt.trim(),
-          styleBrief: includeStyleBrief ? SHARED_STYLE_BRIEF : undefined,
-          aspectRatio,
-          imageSize,
-          shotId: currentShot.id,
-        }),
+      const data = await requestImage({
+        prompt: prompt.trim(),
+        styleBrief: includeStyleBrief ? SHARED_STYLE_BRIEF : undefined,
+        aspectRatio,
+        imageSize,
+        shotId: currentShot.id,
       });
-
       clearInterval(interval);
-
-      const data = await response.json();
-
-      if (!response.ok || !data.success) {
-        throw new Error(data.error || 'Failed to generate image. Please try again.');
-      }
 
       const generatedUrl = data.imageUrl;
       setCurrentResultUrl(generatedUrl);
@@ -165,7 +186,9 @@ export const ImageGenerator: React.FC<ImageGeneratorProps> = ({
   // Run batch generation through selected shots
   const handleRunBatch = async () => {
     if (batchQueue.length === 0) return;
+    setError(null);
     setIsBatchRunning(true);
+    let failedCount = 0;
     setBatchProgress({ current: 0, total: batchQueue.length });
 
     for (let i = 0; i < batchQueue.length; i++) {
@@ -176,19 +199,13 @@ export const ImageGenerator: React.FC<ImageGeneratorProps> = ({
       setBatchProgress({ current: i + 1, total: batchQueue.length, activeId: shotId });
 
       try {
-        const response = await fetch('/api/generate-image', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            prompt: shot.prompt,
-            styleBrief: SHARED_STYLE_BRIEF,
-            aspectRatio: shot.aspectRatio,
-            imageSize,
-            shotId: shot.id,
-          }),
+        const data = await requestImage({
+          prompt: shot.prompt,
+          styleBrief: SHARED_STYLE_BRIEF,
+          aspectRatio: shot.aspectRatio,
+          imageSize,
+          shotId: shot.id,
         });
-
-        const data = await response.json();
         if (data.success && data.imageUrl) {
           onUpdateShotImage(shot.id, data.imageUrl, imageSize);
           onAddToHistory({
@@ -204,12 +221,16 @@ export const ImageGenerator: React.FC<ImageGeneratorProps> = ({
           });
         }
       } catch (e) {
+        failedCount += 1;
         console.error(`Batch failed on shot #${shotId}:`, e);
+        setError(`Batch shot #${shotId} failed: ${e instanceof Error ? e.message : 'Unknown error'}`);
+        if (e instanceof Error && /token|limit|cancelled/i.test(e.message)) break;
       }
     }
 
     setIsBatchRunning(false);
     setBatchProgress(null);
+    if (failedCount > 0) setError(`${failedCount} batch image(s) failed. Review the most recent error and retry those shots.`);
   };
 
   const handleCopyPrompt = () => {
